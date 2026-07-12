@@ -54,6 +54,9 @@ def run_colmap_triangulation(
     """
     Run triangulation from COLMAP input
     """
+    # imagecols：cameras.bin和images.bin
+    # neighbors：表示哪些图像之间有足够的共视关系
+    # ranges：表示每个图像的可见范围
     imagecols, neighbors, ranges = read_scene_colmap(
         cfg,
         colmap_path,
@@ -63,6 +66,8 @@ def run_colmap_triangulation(
     )
 
     # run triangulation
+    # src/limap/runners/line_triangulation.py，整个项目核心函数
+    # 接收前面读好的场景信息，完整跑完从"检测2D线段"到"输出3D线段"的全流程
     linetracks = limap.runners.line_triangulation(
         cfg, imagecols, neighbors=neighbors, ranges=ranges
     )

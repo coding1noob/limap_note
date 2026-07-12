@@ -35,10 +35,12 @@ def line_triangulation(cfg, imagecols, neighbors=None, ranges=None):
     """
     logging.info(f"[LOG] Number of images: {imagecols.NumImages()}")
     cfg = runners.setup(cfg)
+    # var2d 是2D线段的像素级噪声方差，用于三角化时的不确定性建模
+    # yaml 里默认设为 -1，表示"自动按检测器选"。这里就是根据检测器名（deeplsd）去查表
     detector_name = cfg["line2d"]["detector"]["method"]
     if cfg["triangulation"]["var2d"] == -1:
         cfg["triangulation"]["var2d"] = cfg["var2d"][detector_name]
-    # undistort images
+    # undistort images，去畸变
     if not imagecols.IsUndistorted():
         imagecols = runners.undistort_images(
             imagecols,
@@ -47,9 +49,13 @@ def line_triangulation(cfg, imagecols, neighbors=None, ranges=None):
             n_jobs=cfg["n_jobs"],
         )
     # resize cameras
+    # 确保去畸变完成
     assert imagecols.IsUndistorted()
+    # 把图像的长边限制在 max_image_dim=1600 像素以内。这里不是真正缩放图像文件，
+    # 而是更新 imagecols 里的相机内参（焦距、主点等按比例缩放），让后续计算在这个分辨率下进行，以控制速度和内存
     if cfg["max_image_dim"] != -1 and cfg["max_image_dim"] is not None:
         imagecols.set_max_image_dim(cfg["max_image_dim"])
+    # 保存图像列表和集合至 image_list.txt ，方便断点续跑
     limapio.save_txt_imname_dict(
         os.path.join(cfg["dir_save"], "image_list.txt"),
         imagecols.get_image_name_dict(),
@@ -63,16 +69,20 @@ def line_triangulation(cfg, imagecols, neighbors=None, ranges=None):
     ##########################################################
     sfminfos_colmap_folder = None
     if neighbors is None:
+    # 没有邻居信息 → 临时跑一次 COLMAP 点云重建来计算
         sfminfos_colmap_folder, neighbors, ranges = runners.compute_sfminfos(
             cfg, imagecols
         )
-    else:
+    # 一般都传邻域，走这条
+    else:   
         limapio.save_txt_metainfos(
             os.path.join(cfg["dir_save"], "metainfos.txt"), neighbors, ranges
         )
         neighbors = imagecols.update_neighbors(neighbors)
+        # 截断每张图的邻居数量，最多保留 n_neighbors=20 个
         for img_id, _ in neighbors.items():
             neighbors[img_id] = neighbors[img_id][: cfg["n_neighbors"]]
+    # 最后保存邻居和范围信息到 metainfos.txt 里，方便断点续跑
     limapio.save_txt_metainfos(
         os.path.join(cfg["dir_save"], "metainfos.txt"), neighbors, ranges
     )
@@ -80,10 +90,18 @@ def line_triangulation(cfg, imagecols, neighbors=None, ranges=None):
     ##########################################################
     # [B] get 2D line segments for each image
     ##########################################################
+
+    # 先 判断是否需要描述子
+    # use_exhaustive_matcher=False（默认）→ compute_descinfo = True
+    # 逻辑是：用普通matcher（GlueStick）需要描述子才能匹配；用穷举matcher则直接两两比较几何关系，不需要描述子
     compute_descinfo = not cfg["triangulation"]["use_exhaustive_matcher"]
+    # 如果已经有预计算的匹配结果（load_match=True）或已有检测结果（load_det=True），也不需要重新提取描述子
     compute_descinfo = (
         compute_descinfo and (not cfg["load_match"]) and (not cfg["load_det"])
     ) or cfg["line2d"]["compute_descinfo"]
+
+    # 用 DeepLSD 检测2D线段
+    # 用 Wireframe 提取每条线段的描述子，结果存入 line_detections/deeplsd/descinfos/wireframe
     all_2d_segs, descinfo_folder = runners.compute_2d_segs(
         cfg, imagecols, compute_descinfo=compute_descinfo
     )

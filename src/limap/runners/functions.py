@@ -263,6 +263,7 @@ def compute_2d_segs(cfg, imagecols, compute_descinfo=True):
                 folder_save, imagecols, skip_exists=se_det
             )
             if compute_descinfo:
+                # 创建 Wireframe extractor，描述子的实现在它调用的 extractor 对象里
                 extractor = limap.line2d.get_extractor(
                     cfg["line2d"]["extractor"], weight_path=weight_path
                 )
@@ -277,6 +278,7 @@ def compute_2d_segs(cfg, imagecols, compute_descinfo=True):
         all_2d_segs = {id: all_2d_segs[id] for id in imagecols.get_img_ids()}
         descinfo_folder = None
         if compute_descinfo:
+            # 创建 Wireframe extractor，描述子的实现在它调用的 extractor 对象里
             extractor = limap.line2d.get_extractor(
                 cfg["line2d"]["extractor"], weight_path=weight_path
             )
