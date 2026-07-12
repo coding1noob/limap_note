@@ -1,3 +1,6 @@
+import matplotlib
+matplotlib.use("Agg")
+
 from .trackvis import Open3DTrackVisualizer
 from .vis_bipartite import (
     draw_bipartite2d,

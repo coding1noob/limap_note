@@ -1,3 +1,6 @@
+import matplotlib
+matplotlib.use("Agg")
+
 from . import _limap
 
 from . import base

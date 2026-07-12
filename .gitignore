@@ -3,6 +3,7 @@
 cmake-build-*
 *.egg-info/
 deps/
+myNote
 
 *.npy
 *.png
