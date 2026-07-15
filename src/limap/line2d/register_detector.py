@@ -44,6 +44,10 @@ def get_detector(
         from .DeepLSD import DeepLSDDetector
 
         return DeepLSDDetector(options)
+    elif method == "opencv_lsd":
+        from .OpenCVLSD import OpenCVLSDDetector
+
+        return OpenCVLSDDetector(options)
     else:
         raise NotImplementedError
 
