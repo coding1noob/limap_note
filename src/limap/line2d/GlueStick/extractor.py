@@ -83,6 +83,7 @@ class WireframeExtractor(BaseDetector):
             )[None, None]
         }
         with torch.no_grad():
+            # 描述子完全由 self.sp（SuperPoint）算出来
             kp, scores, dense_desc = self.sp.compute_dense_descriptor(torch_img)
             kp, scores = torch.stack(kp), torch.stack(scores)
             kp_desc = [
@@ -101,6 +102,7 @@ class WireframeExtractor(BaseDetector):
             kp[:, :, None] - line_endpts[:, None], dim=-1
         )
         # For each keypoint, mark it as valid or to remove
+        # 过滤掉和线段端点太近的关键点
         pts_to_remove = torch.any(
             dist_pt_lines < self.wireframe_params.nms_radius, dim=2
         )
@@ -126,6 +128,7 @@ class WireframeExtractor(BaseDetector):
         )
 
         # Add the keypoints to the junctions
+        # 把剩下的关键点拼到线段端点后面
         all_points = torch.cat([line_points[0], kp[0]], dim=0).cpu().numpy()
         all_scores = (
             torch.cat([line_pts_scores[0], scores[0]], dim=0).cpu().numpy()

@@ -178,9 +178,12 @@ class SuperPoint(nn.Module):
         logging.info("Downloading SuperPoint model...")
         subprocess.run(cmd, check=True)
 
+    # 实际调用的入口
     def compute_dense_descriptor(self, data):
         """Compute keypoints, scores, descriptors for image"""
-        # Shared Encoder
+        # Shared Encoder（编码器：把原始图像压缩成一组更有意义的特征）
+        # __init__中有定义： conv1a 为 输入1个通道（灰度图），输出64个通道的卷积层，
+        # conv1b 则为 输入64通道，输出64通道 的卷积层
         x = self.relu(self.conv1a(data["image"]))
         x = self.relu(self.conv1b(x))
         x = self.pool(x)
@@ -192,23 +195,39 @@ class SuperPoint(nn.Module):
         x = self.pool(x)
         x = self.relu(self.conv4a(x))
         x = self.relu(self.conv4b(x))
+        # x 是一个 4维的 PyTorch 张量（Tensor），形状是：(batch, 通道数, 高, 宽)
+        # 把原图的每个 8×8 小块，压缩成了一个 128 维的向量。整张图就变成了 60×80 个这样的向量。
+        # 每个向量描述的是"这个区域长什么样"——有没有边缘、角点、纹理等
 
         # Compute the dense keypoint scores
-        cPa = self.relu(self.convPa(x))
-        scores = self.convPb(cPa)
-        scores = torch.nn.functional.softmax(scores, 1)[:, :-1]
+        # 在编码器理解的基础上，专门判断"哪里是关键点"
+        cPa = self.relu(self.convPa(x))                             # 128通道 → 256通道
+        scores = self.convPb(cPa)                                   # 256通道 → 65通道
+        scores = torch.nn.functional.softmax(scores, 1)[:, :-1]     # scores 为 每个像素的关键点概率
         b, _, h, w = scores.shape
+        # 还原到原始分辨率
         scores = scores.permute(0, 2, 3, 1).reshape(b, h, w, 8, 8)
         scores = scores.permute(0, 1, 3, 2, 4).reshape(b, h * 8, w * 8)
         scores = simple_nms(scores, self.config["nms_radius"])
 
         # Extract keypoints
+        # 找出得分超过阈值的像素位置，s > 0.005 把得分图变成一张布尔图：
+        # 0.001  0.8   0.003        False  True  False
+        # 0.02   0.001 0.9    →     True   False True
+        # 0.003  0.7   0.001        False  True  False
+        # torch.nonzero 找出所有 True 的位置坐标，比如：
+        # → [[0, 1],   # 第0行第1列
+        # [1, 0],   # 第1行第0列
+        # [1, 2],   # 第1行第2列
+        # [2, 1]]   # 第2行第1列
         keypoints = [
             torch.nonzero(s > self.config["keypoint_threshold"]) for s in scores
         ]
+        # scores = [s[tuple(k.t())] for s, k in zip(scores, keypoints)]
         scores = [s[tuple(k.t())] for s, k in zip(scores, keypoints)]
 
         # Discard keypoints near the image borders
+        # 图像边缘4个像素以内的关键点直接丢掉
         keypoints, scores = list(
             zip(
                 *[
@@ -221,6 +240,7 @@ class SuperPoint(nn.Module):
         )
 
         # Keep the k keypoints with highest score
+        # 只保留得分最高的 k 个
         if self.config["max_keypoints"] >= 0:
             keypoints, scores = list(
                 zip(
@@ -232,12 +252,17 @@ class SuperPoint(nn.Module):
             )
 
         # Convert (h, w) to (x, y)
+        # 坐标从 (行,列) 转成 (x,y)
         keypoints = [torch.flip(k, [1]).float() for k in keypoints]
 
         # Compute the dense descriptors
+        # 计算密集描述子
         cDa = self.relu(self.convDa(x))
         descriptors = self.convDb(cDa)
         descriptors = torch.nn.functional.normalize(descriptors, p=2, dim=1)
+        # keypoints — 关键点坐标列表。keypoints[0]是第一张图的关键点坐标，每行是一个点的 (x, y) 像素坐标。[[312, 48], [107, 203], ...]
+        # scores — 每个关键点的置信度得分。和 keypoints 一一对应，每个值是 0~1 之间的数
+        # descriptors — 密集描述子。形状是 (1, 256, H/8, W/8)
         return keypoints, scores, descriptors
 
     def compute_dense_descriptor_and_score(self, data):

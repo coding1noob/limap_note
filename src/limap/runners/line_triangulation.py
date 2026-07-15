@@ -100,8 +100,13 @@ def line_triangulation(cfg, imagecols, neighbors=None, ranges=None):
         compute_descinfo and (not cfg["load_match"]) and (not cfg["load_det"])
     ) or cfg["line2d"]["compute_descinfo"]
 
-    # 用 DeepLSD 检测2D线段
-    # 用 Wireframe 提取每条线段的描述子，结果存入 line_detections/deeplsd/descinfos/wireframe
+    # 用 DeepLSD 检测2D线段 -> 得到线段的两个端点坐标 -> 然后 SuperPoint 对整张图算密集描述子
+    # -> 在特征图上，按线段端点的坐标插值采样(线段端点是浮点数，就需要周围四个格子插值) -> 每个端点得到一个256维描述子
+
+    # 用 Wireframe 提取每条线段 端点！ 的描述子，结果存入 line_detections/deeplsd/descinfos/wireframe
+    # all_2d_segs是一个key是图像id，value是该图像的线段列表 的字典，
+    # 每条线段是[x1, y1, x2, y2, score]。score是线段的置信度
+    # descinfo_folder 是字符串路径，指向存放所有 .npz 描述子文件的文件夹，每个.npz都对应着一张图中所有线段端点的描述子
     all_2d_segs, descinfo_folder = runners.compute_2d_segs(
         cfg, imagecols, compute_descinfo=compute_descinfo
     )
@@ -109,6 +114,7 @@ def line_triangulation(cfg, imagecols, neighbors=None, ranges=None):
     ##########################################################
     # [C] get line matches
     ##########################################################
+    # 用 GlueStick 匹配器匹配线段，得到每张图的邻居图像的匹配结果，存入 matches/GlueStick
     if not cfg["triangulation"]["use_exhaustive_matcher"]:
         matches_dir = runners.compute_matches(
             cfg, descinfo_folder, imagecols.get_img_ids(), neighbors
@@ -184,6 +190,7 @@ def line_triangulation(cfg, imagecols, neighbors=None, ranges=None):
             ).item()
             Triangulator.TriangulateImage(img_id, matches)
     linetracks = Triangulator.ComputeLineTracks()
+    logging.info(f"[FILTER] 三角化后: {len(linetracks)} 条轨迹")
 
     # filtering 2d supports
     linetracks = merging.filter_tracks_by_reprojection(
@@ -192,35 +199,41 @@ def line_triangulation(cfg, imagecols, neighbors=None, ranges=None):
         cfg["triangulation"]["filtering2d"]["th_angular_2d"],
         cfg["triangulation"]["filtering2d"]["th_perp_2d"],
     )
+    logging.info(f"[FILTER] filter_tracks_by_reprojection 后: {len(linetracks)} 条轨迹")
     if not cfg["triangulation"]["remerging"]["disable"]:
         # remerging
         linker3d = base.LineLinker3d(
             cfg["triangulation"]["remerging"]["linker3d"]
         )
         linetracks = merging.remerge(linker3d, linetracks)
+        logging.info(f"[FILTER] remerge 后: {len(linetracks)} 条轨迹")
         linetracks = merging.filter_tracks_by_reprojection(
             linetracks,
             imagecols,
             cfg["triangulation"]["filtering2d"]["th_angular_2d"],
             cfg["triangulation"]["filtering2d"]["th_perp_2d"],
         )
+        logging.info(f"[FILTER] remerge 后 filter_tracks_by_reprojection: {len(linetracks)} 条轨迹")
     linetracks = merging.filter_tracks_by_sensitivity(
         linetracks,
         imagecols,
         cfg["triangulation"]["filtering2d"]["th_sv_angular_3d"],
         cfg["triangulation"]["filtering2d"]["th_sv_num_supports"],
     )
+    logging.info(f"[FILTER] filter_tracks_by_sensitivity 后: {len(linetracks)} 条轨迹")
     linetracks = merging.filter_tracks_by_overlap(
         linetracks,
         imagecols,
         cfg["triangulation"]["filtering2d"]["th_overlap"],
         cfg["triangulation"]["filtering2d"]["th_overlap_num_supports"],
     )
+    logging.info(f"[FILTER] filter_tracks_by_overlap 后: {len(linetracks)} 条轨迹")
     validtracks = [
         track
         for track in linetracks
         if track.count_images() >= cfg["n_visible_views"]
     ]
+    logging.info(f"[FILTER] n_visible_views>={cfg['n_visible_views']} 后: {len(validtracks)} 条轨迹")
 
     ##########################################################
     # [E] geometric refinement
@@ -243,7 +256,7 @@ def line_triangulation(cfg, imagecols, neighbors=None, ranges=None):
     limapio.save_txt_linetracks(
         os.path.join(cfg["dir_save"], "alltracks.txt"),
         linetracks,
-        n_visible_views=4,
+        n_visible_views=cfg["n_visible_views"],
     )
     limapio.save_folder_linetracks_with_info(
         os.path.join(cfg["dir_save"], cfg["output_folder"]),
